@@ -1,12 +1,10 @@
 
 from datetime import datetime, timezone
 from uuid import uuid4
-from functools import lru_cache
 
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field, HttpUrl
-
-from sentence_transformers import SentenceTransformer
+from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
 
@@ -20,13 +18,6 @@ app = FastAPI(
 agents = {}
 posts = {}
 comments = {}
-
-
-# ---------------- AI MODEL ----------------
-
-@lru_cache(maxsize=1)
-def get_model():
-    return SentenceTransformer("all-MiniLM-L6-v2")
 
 
 # ---------------- AGENT MODEL ----------------
@@ -74,7 +65,6 @@ def health_check():
 
 @app.post("/api/v1/agents/register", status_code=201)
 def register_agent(agent: AgentRegistration):
-
     agent_id = str(uuid4())
 
     new_agent = {
@@ -98,7 +88,6 @@ def register_agent(agent: AgentRegistration):
 
 @app.get("/api/v1/agents")
 def get_agents():
-
     return {
         "total_agents": len(agents),
         "agents": list(agents.values()),
@@ -109,14 +98,10 @@ def get_agents():
 
 @app.get("/api/v1/agents/{agent_id}")
 def get_agent(agent_id: str):
-
     agent = agents.get(agent_id)
 
     if agent is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Agent not found",
-        )
+        raise HTTPException(status_code=404, detail="Agent not found")
 
     return agent
 
@@ -125,7 +110,6 @@ def get_agent(agent_id: str):
 
 @app.post("/api/v1/posts", status_code=201)
 def create_post(post: PostCreate):
-
     agent = agents.get(post.agent_id)
 
     if agent is None:
@@ -158,7 +142,6 @@ def create_post(post: PostCreate):
 
 @app.get("/api/v1/posts")
 def get_posts():
-
     return {
         "total_posts": len(posts),
         "posts": list(posts.values()),
@@ -169,33 +152,25 @@ def get_posts():
 
 @app.get("/api/v1/posts/{post_id}")
 def get_post(post_id: str):
-
     post = posts.get(post_id)
 
     if post is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Post not found",
-        )
+        raise HTTPException(status_code=404, detail="Post not found")
 
     return post
 
 
-# ---------------- AI AGENT MATCHING ----------------
+# ---------------- LIGHTWEIGHT AGENT MATCHING ----------------
 
 @app.get("/api/v1/posts/{post_id}/matches")
 def match_agents(
     post_id: str,
     limit: int = Query(default=5, ge=1, le=50),
 ):
-
     post = posts.get(post_id)
 
     if post is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Post not found",
-        )
+        raise HTTPException(status_code=404, detail="Post not found")
 
     # Exclude the agent who published the post
     interested_agents = [
@@ -207,6 +182,7 @@ def match_agents(
         return {
             "post_id": post_id,
             "total_matches": 0,
+            "matching_method": "TF-IDF with cosine similarity",
             "matches": [],
         }
 
@@ -218,25 +194,23 @@ def match_agents(
         for agent in interested_agents
     ]
 
-    # Generate AI embeddings
-    model = get_model()
-
-    embeddings = model.encode(
-        [post_text] + agent_texts,
-        convert_to_numpy=True,
+    # Convert text into lightweight TF-IDF vectors
+    vectorizer = TfidfVectorizer(
+        stop_words="english",
+        ngram_range=(1, 2),
     )
+
+    vectors = vectorizer.fit_transform([post_text] + agent_texts)
 
     # Calculate cosine similarity
     scores = cosine_similarity(
-        embeddings[0:1],
-        embeddings[1:],
+        vectors[0:1],
+        vectors[1:],
     )[0]
 
-    # Combine agents with similarity scores
     matches = []
 
     for agent, score in zip(interested_agents, scores):
-
         matches.append({
             "agent_id": agent["id"],
             "company_name": agent["company_name"],
@@ -256,6 +230,7 @@ def match_agents(
     return {
         "post_id": post_id,
         "post_title": post["title"],
+        "matching_method": "TF-IDF with cosine similarity",
         "total_matches": len(selected_matches),
         "matches": selected_matches,
     }
@@ -265,14 +240,10 @@ def match_agents(
 
 @app.post("/api/v1/posts/{post_id}/comments", status_code=201)
 def add_comment(post_id: str, comment: CommentCreate):
-
     post = posts.get(post_id)
 
     if post is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Post not found",
-        )
+        raise HTTPException(status_code=404, detail="Post not found")
 
     agent = agents.get(comment.agent_id)
 
@@ -303,14 +274,10 @@ def add_comment(post_id: str, comment: CommentCreate):
 
 @app.get("/api/v1/posts/{post_id}/comments")
 def get_comments(post_id: str):
-
     post = posts.get(post_id)
 
     if post is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Post not found",
-        )
+        raise HTTPException(status_code=404, detail="Post not found")
 
     post_comments = comments.get(post_id, [])
 
